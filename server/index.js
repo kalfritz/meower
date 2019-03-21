@@ -2,30 +2,74 @@ const express = require('express');
 const cors = require('cors');
 const volleyball = require('volleyball');
 const monk = require('monk');
+const rateLimit = require('express-rate-limit');
 
 const app = express();
 
-/* database */ const db = monk('localhost/meower');
-/* collection */ const mews = db.get('mews');
+const db = monk(process.env.MONGO_URI || 'localhost/meower');
+const mews = db.get('mews');
 app.use(express.json());
 app.use(cors());
-
 app.use(volleyball);
 
 app.get('/', (req, res) => {
   res.json({
-    message: 'meow!',
+    message: 'oi',
   });
+});
+
+app.get('/mews', (req, res, next) => {
+  let { skip = 0, limit = 10, sort = 'desc' } = req.query;
+  skip = parseInt(skip) || 0;
+  limit = parseInt(limit) || 5;
+
+  skip = skip < 0 ? 0 : skip;
+  limit = Math.min(50, Math.max(1, limit));
+
+  Promise.all([
+    mews.count(),
+    mews.find(
+      {},
+      {
+        skip,
+        limit,
+        sort: {
+          created: sort === 'desc' ? -1 : 1,
+        },
+      },
+    ),
+  ])
+    .then(([total, mews]) => {
+      res.json({
+        mews,
+        meta: {
+          total,
+          skip,
+          limit,
+          has_more: total - (skip + limit) > 0,
+        },
+      });
+    })
+    .catch(next);
 });
 
 const isValidMew = mew => {
   return (
     mew.name &&
     mew.name.toString().trim() !== '' &&
+    mew.name.toString().trim().length <= 50 &&
     mew.content &&
-    mew.content.toString().trim() !== ''
+    mew.content.toString().trim() !== '' &&
+    mew.content.toString().trim().length <= 140
   );
 };
+
+app.use(
+  rateLimit({
+    windowMs: 10 * 1000, // 10 sec
+    max: 3,
+  }),
+);
 
 app.post('/mews', (req, res) => {
   console.log('req.body', req.body);
@@ -64,6 +108,7 @@ function errorHandler(err, req, res, next) {
 app.use(notFound);
 app.use(errorHandler);
 
-app.listen(5500, () => {
-  console.log('Listening on http://localhost:5500');
+const port = process.env.PORT || 3000;
+app.listen(port, () => {
+  console.log(`Listening on port ${port}`);
 });
